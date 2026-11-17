@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+- The package now lives in its own repository,
+  [CodeWithSachin/ngx-video-js](https://github.com/CodeWithSachin/ngx-video-js).
+  The `repository` and `bugs` links point there.
+- Ships a `LICENSE` file.
+- No code changes from 0.2.0.
+
 ## 0.2.0
 
 ### Added

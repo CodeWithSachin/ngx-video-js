@@ -1,0 +1,4 @@
+dist
+node_modules
+package-lock.json
+projects/ngx-video-js/src/lib/video-skin.component.css

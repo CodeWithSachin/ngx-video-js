@@ -1,46 +1,37 @@
 {
-  "name": "@code_with_sachin/ngx-video-js",
-  "version": "0.2.0",
-  "description": "Angular wrapper for the Video.js 10 web components — the default skin in one standalone component, with playback events, an imperative API and a seek guard. SSR-safe and lazily loaded.",
-  "keywords": [
-    "angular",
-    "videojs",
-    "video.js",
-    "video",
-    "player",
-    "media",
-    "hls",
-    "custom-elements",
-    "web-components",
-    "ssr",
-    "standalone",
-    "signals"
-  ],
-  "homepage": "https://sachinsingh.me/packages/video",
-  "license": "MIT",
-  "author": "Sachin Singh (https://sachinsingh.me)",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/CodeWithSachin/kshatriya-portfolio.git",
-    "directory": "projects/ngx-video-js"
-  },
-  "bugs": {
-    "url": "https://github.com/CodeWithSachin/kshatriya-portfolio/issues"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
-  "peerDependencies": {
-    "@angular/common": "^22.0.0",
-    "@angular/core": "^22.0.0",
-    "@videojs/html": "^10.5.0",
-    "@videojs/hlsjs-video": "^10.5.0",
-    "@videojs/dash-video": "^10.5.0",
-    "@videojs/youtube-video": "^10.5.0",
-    "@videojs/vimeo-video": "^10.5.0"
+  "name": "ngx-video-js-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "npm@10.9.8",
+  "scripts": {
+    "build": "ng build ngx-video-js",
+    "test": "ng test ngx-video-js --watch=false",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "pack": "npm run build && npm pack ./dist/ngx-video-js",
+    "release": "npm run build && npm test && npm publish ./dist/ngx-video-js"
   },
   "dependencies": {
+    "@angular/common": "^22.0.0",
+    "@angular/compiler": "^22.0.0",
+    "@angular/core": "^22.0.0",
+    "@angular/platform-browser": "^22.0.0",
+    "rxjs": "~7.8.0",
     "tslib": "^2.3.0"
   },
-  "sideEffects": false
+  "devDependencies": {
+    "@angular/build": "^22.0.5",
+    "@angular/cli": "^22.0.5",
+    "@angular/compiler-cli": "^22.0.0",
+    "@videojs/dash-video": "10.5.0",
+    "@videojs/hlsjs-video": "10.5.0",
+    "@videojs/html": "10.5.0",
+    "@videojs/vimeo-video": "10.5.0",
+    "@videojs/youtube-video": "10.5.0",
+    "jsdom": "^28.0.0",
+    "ng-packagr": "^22.0.0",
+    "prettier": "^3.8.1",
+    "typescript": "~6.0.2",
+    "vitest": "^4.0.8"
+  }
 }
