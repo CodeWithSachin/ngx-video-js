@@ -29,18 +29,25 @@ const MEDIA_LOADERS: Record<Exclude<VideoProvider, 'video'>, () => Promise<unkno
   vimeo: () => import('@videojs/html/media/vimeo-video'),
 };
 
+/**
+ * The player element goes first. UI elements look for its context when they
+ * connect, and one that upgrades ahead of it logs a "requires … feature"
+ * warning for every control.
+ */
 const SKIN_LOADERS: Record<VideoSkin, () => Promise<unknown>> = {
-  video: () =>
-    Promise.all([import('@videojs/html/video/player'), import('@videojs/html/video/skin')]),
+  video: () => import('@videojs/html/video/player').then(() => import('@videojs/html/video/skin')),
   live: () =>
-    Promise.all([
-      import('@videojs/html/live-video/player'),
-      import('@videojs/html/live-video/skin'),
-    ]),
+    import('@videojs/html/live-video/player').then(() => import('@videojs/html/live-video/skin')),
   // The ejected skin renders the UI elements itself, so it needs the whole set
-  // plus <media-icon>, and no packaged skin element at all.
+  // plus <media-icon>, and no packaged skin element at all. Since 10.5.0
+  // `video/ui` no longer defines <video-player>, so that is imported here.
   custom: () =>
-    Promise.all([import('@videojs/html/video/ui'), import('@videojs/html/icons/element/default')]),
+    import('@videojs/html/video/player').then(() =>
+      Promise.all([
+        import('@videojs/html/video/ui'),
+        import('@videojs/html/icons/element/default'),
+      ]),
+    ),
 };
 
 const loaded = new Map<string, Promise<unknown>>();
@@ -72,12 +79,16 @@ export function loadVideoJsElements(
 
   const media = provider === 'video' ? null : MEDIA_LOADERS[provider];
 
+  // The media element registers with the player when it connects, so it is
+  // defined once the player is — fetched in parallel, upgraded after.
+  const player = customElements.whenDefined(skin === 'live' ? 'live-video-player' : 'video-player');
+
   return Promise.all([
     once(`skin:${skin}`, SKIN_LOADERS[skin]),
     // Defines <media-i18n>. Locale packs load themselves, and only when the
     // resolved language is not English.
     once('i18n', () => import('@videojs/html/i18n')),
-    media ? once(provider, media) : null,
+    media ? player.then(() => once(provider, media)) : null,
   ]);
 }
 

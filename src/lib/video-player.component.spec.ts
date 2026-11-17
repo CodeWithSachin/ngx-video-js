@@ -132,7 +132,9 @@ describe('NgxVideoPlayer', () => {
 
     expect(host.querySelector('live-video-player > live-video-skin > hlsjs-video')).toBeTruthy();
     expect(host.querySelector('video-player')).toBeNull();
-    expect(host.querySelector('hlsjs-video')?.getAttribute('stream-type')).toBe('live');
+    expect(host.querySelector<HTMLElement>('hlsjs-video')?.getAttribute('stream-type')).toBe(
+      'live',
+    );
 
     await setInputs({ skin: 'video' });
     expect(host.querySelector('video-player > video-skin > hlsjs-video')).toBeTruthy();
@@ -157,7 +159,7 @@ describe('NgxVideoPlayer', () => {
       disableRemotePlayback: '',
     });
 
-    const media = host.querySelector('hlsjs-video')!;
+    const media = host.querySelector<HTMLElement>('hlsjs-video')!;
     expect(media.getAttribute('stream-type')).toBe('live');
     expect(media.hasAttribute('disablepictureinpicture')).toBe(true);
     expect(media.hasAttribute('disableremoteplayback')).toBe(true);
@@ -201,12 +203,14 @@ describe('NgxVideoPlayer custom skin', () => {
   });
 
   it('renders the ejected skin in light DOM with everything on by default', () => {
-    expect(has('video-player > ngx-video-skin media-container.media-default-skin')).toBe(true);
+    expect(has('video-player > ngx-video-skin media-container.media-skin.video-skin')).toBe(true);
     // The packaged skin elements are gone — this is our own template now.
     expect(has('video-skin')).toBe(false);
 
     for (const part of [
       'media-play-button',
+      'media-seek-button',
+      'media-title',
       'media-mute-button',
       'media-volume-slider',
       'media-time-slider',
@@ -241,6 +245,8 @@ describe('NgxVideoPlayer custom skin', () => {
 
     expect(has('media-time-slider')).toBe(false);
     expect(has('media-time-slider media-slider-thumb')).toBe(false);
+    // The ±10 s buttons seek too, so they go with it.
+    expect(has('media-seek-button')).toBe(false);
     // The volume slider keeps its own thumb.
     expect(has('media-volume-slider media-slider-thumb')).toBe(true);
     // Its neighbours are untouched.
@@ -288,13 +294,13 @@ describe('NgxVideoPlayer custom skin', () => {
         fullscreenButton: false,
       },
     });
-    expect(has('.media-controls--secondary')).toBe(false);
+    expect(has('.video-controls-secondary')).toBe(false);
 
     await setInputs({
       controls: { qualityMenu: false, audioMenu: false, speedMenu: false, captionsMenu: false },
     });
-    expect(has('#settings-trigger')).toBe(false);
-    expect(has('#settings-menu')).toBe(false);
+    expect(has('.media-settings-menu-trigger')).toBe(false);
+    expect(has('media-menu')).toBe(false);
 
     await setInputs({ controls: { controlBar: false } });
     expect(has('media-controls')).toBe(false);
@@ -304,11 +310,187 @@ describe('NgxVideoPlayer custom skin', () => {
     expect(has('media-buffering-indicator')).toBe(true);
   });
 
+  it('can drop the seek buttons alone and keep the seek bar', async () => {
+    await setInputs({ controls: { seekButtons: false } });
+    expect(has('media-seek-button')).toBe(false);
+    expect(has('media-time-slider')).toBe(true);
+  });
+
+  it('gives each player its own tooltip and menu ids', async () => {
+    const second = TestBed.createComponent(NgxVideoPlayer);
+    second.componentRef.setInput('src', 'https://example.com/video.mp4');
+    second.componentRef.setInput('skin', 'custom');
+    await second.whenStable();
+
+    const ids = (root: HTMLElement) => [...root.querySelectorAll('[id]')].map((el) => el.id);
+    const mine = ids(host);
+    const theirs = ids(second.nativeElement as HTMLElement);
+    expect(mine.length).toBeGreaterThan(0);
+    expect(mine.filter((id) => theirs.includes(id))).toEqual([]);
+
+    // Every tooltip points at a trigger that exists in its own player.
+    for (const tooltip of host.querySelectorAll('media-tooltip[trigger]')) {
+      expect(host.querySelector(`#${tooltip.getAttribute('trigger')}`)).toBeTruthy();
+    }
+    const settings = host.querySelector('.media-settings-menu-trigger')!;
+    expect(host.querySelector(`#${settings.getAttribute('commandfor')}`)?.localName).toBe(
+      'media-menu',
+    );
+  });
+
   it('keeps the radio-group item templates parseable by Video.js', () => {
     const group = host.querySelector('media-quality-radio-group')!;
     const template = group.querySelector('template') as HTMLTemplateElement;
     // Video.js reads template.content, not the light children.
     expect(template.content.firstElementChild?.localName).toBe('media-menu-radio-item');
+  });
+});
+
+describe('NgxVideoPlayer events, methods and guards', () => {
+  let fixture: ComponentFixture<NgxVideoPlayer>;
+  let player: NgxVideoPlayer;
+  let video: HTMLVideoElement;
+
+  /** jsdom has no media pipeline, so drive the element's state by hand. */
+  const state = { currentTime: 0, duration: 600, paused: true, ended: false, readyState: 0 };
+  const fire = (type: string) => video.dispatchEvent(new Event(type));
+  const at = (time: number, type: 'timeupdate' | 'seeking') => {
+    state.currentTime = time;
+    fire(type);
+  };
+
+  beforeEach(async () => {
+    Object.assign(state, {
+      currentTime: 0,
+      duration: 600,
+      paused: true,
+      ended: false,
+      readyState: 0,
+    });
+    fixture = TestBed.createComponent(NgxVideoPlayer);
+    fixture.componentRef.setInput('src', 'https://example.com/video.mp4');
+    await fixture.whenStable();
+    player = fixture.componentInstance;
+    video = (fixture.nativeElement as HTMLElement).querySelector('video')!;
+
+    for (const key of Object.keys(state) as (keyof typeof state)[]) {
+      Object.defineProperty(video, key, {
+        configurable: true,
+        get: () => state[key],
+        set: (value) => ((state as Record<string, unknown>)[key] = value),
+      });
+    }
+    video.pause = vi.fn(() => void (state.paused = true));
+    video.play = vi.fn(async () => void (state.paused = false));
+
+    await player.whenReady();
+  });
+
+  const setInputs = async (inputs: Record<string, unknown>) => {
+    for (const [name, value] of Object.entries(inputs)) fixture.componentRef.setInput(name, value);
+    await fixture.whenStable();
+  };
+
+  it('exposes the media element once it is listening', () => {
+    expect(player.media()).toBe(video);
+  });
+
+  it('re-emits the media events', () => {
+    const seen: string[] = [];
+    player.timeUpdate.subscribe((e) => seen.push(`time:${e.currentTime}/${e.duration}`));
+    player.metadataLoaded.subscribe((e) => seen.push(`meta:${e.duration}`));
+    player.playing.subscribe(() => seen.push('playing'));
+    player.paused.subscribe(() => seen.push('paused'));
+    player.ended.subscribe(() => seen.push('ended'));
+
+    fire('loadedmetadata');
+    fire('playing');
+    at(1, 'timeupdate');
+    fire('pause');
+    state.ended = true;
+    fire('pause');
+    fire('ended');
+
+    // The pause that comes with the end is reported as `ended` only.
+    expect(seen).toEqual(['meta:600', 'playing', 'time:1/600', 'paused', 'ended']);
+  });
+
+  it('drives the media from code', async () => {
+    await player.play();
+    expect(video.play).toHaveBeenCalled();
+    await player.togglePlay();
+    expect(video.pause).toHaveBeenCalled();
+  });
+
+  it('lets anything through with the guard off', () => {
+    const blocked = vi.fn();
+    player.seekBlocked.subscribe(blocked);
+    at(300, 'seeking');
+    expect(state.currentTime).toBe(300);
+    expect(blocked).not.toHaveBeenCalled();
+  });
+
+  it('forward: allows rewinding but not skipping past what was watched', async () => {
+    await setInputs({ seekGuard: 'forward' });
+    const blocked: unknown[] = [];
+    player.seekBlocked.subscribe((e) => blocked.push(e));
+
+    for (const t of [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]) at(t, 'timeupdate');
+
+    at(300, 'seeking');
+    expect(state.currentTime).toBe(2);
+    expect(blocked).toEqual([{ attempted: 300, restored: 2 }]);
+
+    at(1, 'seeking');
+    expect(state.currentTime).toBe(1);
+    // Back up to the furthest point is fine, from wherever the viewer is.
+    at(2, 'seeking');
+    expect(state.currentTime).toBe(2);
+    expect(blocked.length).toBe(1);
+  });
+
+  it('forward: catches a jump that never raised seeking', async () => {
+    await setInputs({ seekGuard: 'forward' });
+    at(1, 'timeupdate');
+    at(120, 'timeupdate');
+    expect(state.currentTime).toBe(1);
+  });
+
+  it('forward: watchedUntil opens up the part already watched', async () => {
+    await setInputs({ seekGuard: 'forward', watchedUntil: 90 });
+    at(80, 'seeking');
+    expect(state.currentTime).toBe(80);
+    at(200, 'seeking');
+    expect(state.currentTime).toBe(80);
+  });
+
+  it('all: refuses seeking in either direction, but allows a replay', async () => {
+    await setInputs({ seekGuard: 'all' });
+    for (const t of [0.5, 1, 1.5, 2, 2.5, 3]) at(t, 'timeupdate');
+
+    at(1, 'seeking');
+    expect(state.currentTime).toBe(3);
+
+    // Played through to the end, then back to the start.
+    for (let t = 3.5; t <= 600; t += 0.5) at(t, 'timeupdate');
+    at(0, 'seeking');
+    expect(state.currentTime).toBe(0);
+  });
+
+  it('pauses when the tab is hidden, only when asked to', async () => {
+    const doc = fixture.nativeElement.ownerDocument as Document;
+    Object.defineProperty(doc, 'hidden', { configurable: true, get: () => true });
+    try {
+      state.paused = false;
+      doc.dispatchEvent(new Event('visibilitychange'));
+      expect(video.pause).not.toHaveBeenCalled();
+
+      await setInputs({ pauseWhenHidden: true });
+      doc.dispatchEvent(new Event('visibilitychange'));
+      expect(video.pause).toHaveBeenCalledTimes(1);
+    } finally {
+      delete (doc as unknown as Record<string, unknown>)['hidden'];
+    }
   });
 });
 

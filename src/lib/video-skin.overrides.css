@@ -1,0 +1,9 @@
+/*
+ * Rules this package adds on top of the vendored upstream stylesheet. Kept
+ * apart so video-skin.component.css can be re-copied verbatim on an upgrade.
+ */
+
+/* Holds the remaining time against the right edge when the seek bar is removed. */
+.media-skin .ngx-video-time-spacer {
+  flex: 1;
+}

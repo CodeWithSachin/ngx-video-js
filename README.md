@@ -16,6 +16,7 @@ registration on the server, and no stylesheet to remember to import.
 - Skin CSS travels inside the skin's shadow root, so nothing leaks into your app.
 - Definitions are registered once per document, no matter how many players render.
 - Standalone component, signal inputs, zoneless-friendly.
+- Playback events, an imperative API (`play()`, `seek()`, fullscreen…) and a hard seek guard.
 
 ## Install
 
@@ -23,7 +24,15 @@ registration on the server, and no stylesheet to remember to import.
 npm i @code_with_sachin/ngx-video-js @videojs/html
 ```
 
-Peer dependencies: Angular 22+, `@videojs/html` 10 (currently beta).
+Peer dependencies: Angular 22+ and `@videojs/html` 10.5+. Since 10.5.0 the HLS,
+DASH, YouTube and Vimeo engines ship as separate packages; they are peers of this
+one, so npm and pnpm install them for you. With Yarn, add them yourself:
+
+```bash
+yarn add @videojs/hlsjs-video @videojs/dash-video @videojs/youtube-video @videojs/vimeo-video
+```
+
+Each one is a lazy chunk — a page that only plays MP4 never downloads hls.js.
 
 ## Usage
 
@@ -52,19 +61,143 @@ export class Talk {}
 
 ## Inputs
 
-| Input         | Type                                     | Default      | Notes                                                                                                 |
-| ------------- | ---------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------- |
-| `src`         | `string`                                 | **required** | Passed to the inner `<video>`. MP4, or HLS where the browser plays it natively.                       |
-| `poster`      | `string`                                 | `''`         | Rendered as an `<img>` in the skin's poster slot — `srcset` and friends work because you own the tag. |
-| `posterAlt`   | `string`                                 | `''`         | Leave empty when the poster is decorative.                                                            |
-| `placeholder` | `string`                                 | `''`         | Tiny image blurred behind the poster while it loads (`placeholdersrc`).                               |
-| `preload`     | `'none' \| 'metadata' \| 'auto'`         | `'metadata'` |                                                                                                       |
-| `crossOrigin` | `'' \| 'anonymous' \| 'use-credentials'` | `''`         | Needed for cross-origin text tracks.                                                                  |
-| `autoplay`    | `boolean`                                | `false`      | Browsers require `muted` alongside it.                                                                |
-| `muted`       | `boolean`                                | `false`      |                                                                                                       |
-| `loop`        | `boolean`                                | `false`      |                                                                                                       |
+| Input             | Type                                                           | Default      | Notes                                                                                                 |
+| ----------------- | -------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------- |
+| `src`             | `string`                                                       | **required** | MP4/WebM, an HLS `.m3u8`, a DASH `.mpd`, or a YouTube or Vimeo link — see `provider`.                 |
+| `provider`        | `'auto' \| 'video' \| 'hls' \| 'dash' \| 'youtube' \| 'vimeo'` | `'auto'`     | `'auto'` picks the media element from the URL: host for embeds, extension for manifests.              |
+| `skin`            | `'video' \| 'live' \| 'custom'`                                | `'video'`    | See [Live](#live) and [Removing controls](#removing-controls).                                        |
+| `controls`        | `VideoControls`                                                | `{}`         | `skin="custom"` only. Which parts render.                                                             |
+| `tracks`          | `VideoTextTrack[]`                                             | `[]`         | Subtitles, captions, chapters and thumbnail tracks.                                                   |
+| `poster`          | `string`                                                       | `''`         | Rendered as an `<img>` in the skin's poster slot — `srcset` and friends work because you own the tag. |
+| `posterAlt`       | `string`                                                       | `''`         | Leave empty when the poster is decorative.                                                            |
+| `placeholder`     | `string`                                                       | `''`         | Tiny image blurred behind the poster while it loads (`placeholdersrc`).                               |
+| `preload`         | `'none' \| 'metadata' \| 'auto'`                               | `'metadata'` |                                                                                                       |
+| `crossOrigin`     | `'' \| 'anonymous' \| 'use-credentials'`                       | `''`         | Needed for cross-origin text tracks.                                                                  |
+| `autoplay`        | `boolean`                                                      | `false`      | Browsers require `muted` alongside it.                                                                |
+| `muted`           | `boolean`                                                      | `false`      |                                                                                                       |
+| `loop`            | `boolean`                                                      | `false`      |                                                                                                       |
+| `seekGuard`       | `'off' \| 'forward' \| 'all'`                                  | `'off'`      | See [Locking down seeking](#locking-down-seeking).                                                    |
+| `watchedUntil`    | `number`                                                       | `0`          | Seconds already watched, for `seekGuard="forward"`.                                                   |
+| `pauseWhenHidden` | `boolean`                                                      | `false`      | Pauses when the tab is hidden.                                                                        |
 
 `playsinline` is always set — without it iOS Safari takes the video fullscreen on play.
+
+## Events
+
+Every output re-emits the media element's own event, so the cadence and
+semantics are the browser's — and identical across MP4, HLS, DASH, YouTube and
+Vimeo.
+
+```html
+<ngx-video-player
+  src="/media/lesson.m3u8"
+  (metadataLoaded)="duration = $event.duration"
+  (timeUpdate)="progress.save($event.currentTime)"
+  (playing)="analytics.track('play')"
+  (paused)="analytics.track('pause')"
+  (ended)="markComplete()"
+/>
+```
+
+| Output           | Payload                                 | When                                                                                |
+| ---------------- | --------------------------------------- | ----------------------------------------------------------------------------------- |
+| `ready`          | `VideoMedia`                            | The media element is upgraded and listening.                                        |
+| `metadataLoaded` | `{ duration, videoWidth, videoHeight }` | Duration and dimensions are known. Again on every `src` change.                     |
+| `timeUpdate`     | `{ currentTime, duration }`             | About four times a second while playing, and after each seek.                       |
+| `playing`        | —                                       | Playback actually started — after buffering, so also after a seek or a stall.       |
+| `paused`         | —                                       | Playback paused. The pause that comes with reaching the end is reported as `ended`. |
+| `ended`          | —                                       | Reached the end (never fires with `loop`).                                          |
+| `seekBlocked`    | `{ attempted, restored }`               | `seekGuard` refused a seek and put playback back.                                   |
+
+## Controlling playback from code
+
+Grab the component with `viewChild` and call it. Every method waits for the
+media element if it has not loaded yet, so calling one straight after render is
+fine.
+
+```ts
+import { Component, viewChild } from '@angular/core';
+import { NgxVideoPlayer } from '@code_with_sachin/ngx-video-js';
+
+@Component({
+  imports: [NgxVideoPlayer],
+  template: `
+    <ngx-video-player #player src="/media/lesson.mp4" />
+    <button (click)="player.togglePlay()">Play / pause</button>
+    <button (click)="player.toggleFullscreen()">Fullscreen</button>
+  `,
+})
+export class Lesson {
+  readonly player = viewChild.required(NgxVideoPlayer);
+
+  resume(seconds: number) {
+    return this.player().seek(seconds); // resolves with where playback landed
+  }
+}
+```
+
+| Method                                                          | Notes                                                                                               |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `play()`                                                        | Rejects when the browser blocks it — unmuted autoplay, mostly.                                      |
+| `pause()`, `togglePlay()`                                       |                                                                                                     |
+| `seek(seconds)`                                                 | Waits for metadata, clamps to the duration, resolves once the seek completes. Bypasses `seekGuard`. |
+| `requestFullscreen()`, `exitFullscreen()`, `toggleFullscreen()` | The whole player, controls and captions included. Browsers require a click or key press.            |
+| `whenReady()`                                                   | Resolves with the media element.                                                                    |
+
+For anything else there are two handles, both signals and both `null` until
+loaded (and always on the server):
+
+- `media()` — the media element: a native `<video>` or a Video.js media element,
+  all with the `HTMLMediaElement` playback surface (`currentTime`, `volume`,
+  `playbackRate`, …).
+- `store()` — the `<video-player>` store every built-in control acts through:
+  `store().state` for volume, captions, quality, PiP and the rest, and
+  `store().subscribe()` to follow changes.
+
+## Locking down seeking
+
+For compliance and course content, where the viewer has to watch rather than
+skip:
+
+```ts
+@Component({
+  imports: [NgxVideoPlayer],
+  template: `
+    <ngx-video-player
+      skin="custom"
+      [src]="lesson.src"
+      [controls]="{ progressBar: false, speedMenu: false }"
+      seekGuard="forward"
+      [watchedUntil]="lesson.watchedSeconds"
+      pauseWhenHidden
+      (timeUpdate)="save($event.currentTime)"
+      (ended)="complete()"
+    />
+  `,
+})
+export class Lesson {}
+```
+
+Three layers, each closing what the one before leaves open:
+
+1. **`progressBar: false`** removes every seeking affordance from the skin — the
+   seek bar, the ±10 s buttons, arrow keys, `j`/`l`, `0`–`9`, `Home`/`End`,
+   double-tap and the seek indicator. **`speedMenu: false`** removes the speed
+   menu and `<`/`>`. Applied live, without remounting.
+2. **`seekGuard`** stops seeks from outside the skin: the browser's own media
+   controls, Media Session keys, a picture-in-picture window, or
+   `video.currentTime = …` in the console. It snaps playback back to where it
+   was and emits `seekBlocked`. `'forward'` still lets the viewer rewind, and
+   seek forward up to the furthest point they have played to (or
+   `watchedUntil`, if that is further); `'all'` refuses every seek but replays
+   and loops. A jump that never raised a `seeking` event still shows up as a gap
+   between time updates and is undone the same way.
+3. **`pauseWhenHidden`** pauses the moment the tab is hidden, so the video cannot
+   play to the end in a background tab.
+
+`seek()` on the component is trusted, so resuming from your own records works
+under any guard. Playback rate is not policed: someone who changes
+`playbackRate` from the console is still watching every frame, only faster.
 
 ## Language
 
@@ -123,26 +256,28 @@ export class Lesson {
 ```
 
 **Removing a control removes its shortcuts too.** Drop `progressBar` and the
-arrow keys, `j`/`l`, `Home`/`End`, `0`–`9`, the double-tap seek and the seek
-indicator all go with it — otherwise the restriction would be decoration. The
+±10 s buttons, arrow keys, `j`/`l`, `Home`/`End`, `0`–`9`, the double-tap seek
+and the seek indicator all go with it — otherwise the restriction would be
+decoration. To stop seeks from outside the skin too, add
+[`seekGuard`](#locking-down-seeking). The
 same applies to submenus: closing `settingsMenu` takes `<`/`>` with it, because
 a shortcut whose control is unreachable is a way back in.
 
-| Group     | Keys                                                                                                                                                      |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Layers    | `poster`, `bufferingIndicator`, `errorDialog`, `overlay`                                                                                                  |
-| Primary   | `controlBar`, `playButton`, `muteButton`, `volumeSlider`, `currentTime`, `progressBar`, `chapters`, `thumbnailPreview`, `remainingTime`, `captionsButton` |
-| Menu      | `settingsMenu`, `qualityMenu`, `audioMenu`, `speedMenu`, `captionsMenu`                                                                                   |
-| Secondary | `castButton`, `airplayButton`, `pipButton`, `fullscreenButton`                                                                                            |
-| Input     | `hotkeys`, `gestures`, `tooltips`, `statusAnnouncer`, `volumeIndicator`, `statusIndicator`, `seekIndicator`                                               |
+| Group     | Keys                                                                                                                                                                     |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Layers    | `poster`, `bufferingIndicator`, `errorDialog`, `overlay`, `title`                                                                                                        |
+| Primary   | `controlBar`, `playButton`, `seekButtons`, `muteButton`, `volumeSlider`, `currentTime`, `progressBar`, `chapters`, `thumbnailPreview`, `remainingTime`, `captionsButton` |
+| Menu      | `settingsMenu`, `qualityMenu`, `audioMenu`, `speedMenu`, `captionsMenu`                                                                                                  |
+| Top right | `castButton`, `airplayButton`, `pipButton`, `fullscreenButton`                                                                                                           |
+| Input     | `hotkeys`, `gestures`, `tooltips`, `statusAnnouncer`, `volumeIndicator`, `statusIndicator`, `seekIndicator`                                                              |
 
 Every key defaults to `true`. Containers collapse on their own: turn off all
-four buttons in the second row and the row goes; turn off every submenu and the
+four top-right buttons and their cluster goes; turn off every submenu and the
 settings trigger goes with them. Changes apply live — it is an Angular template,
 not a custom element, so nothing remounts.
 
 Two costs, both worth knowing before you switch: the skin's stylesheet travels
-with the component rather than inside a shadow root, which is about 25 kB
+with the component rather than inside a shadow root, which is about 12 kB
 gzipped in whichever chunk imports the player, and you no longer pick up
 upstream design updates by bumping the version.
 
@@ -160,7 +295,7 @@ cannot.
 
 `disableRemotePlayback` genuinely removes AirPlay and Cast — the availability
 watch rejects and both buttons go `unsupported`. `disablePictureInPicture` does
-**not** currently do the same for PiP: 10.0.0-beta.27 derives that button's
+**not** currently do the same for PiP: 10.5.0 still derives that button's
 availability from the browser's capability alone, so the attribute stops the
 browser's own auto-PiP but leaves the skin's button in place, throwing if
 pressed. Both are read when the media element attaches, so set them before the
@@ -222,12 +357,13 @@ ngx-video-player {
 
 ## Requirements
 
-| Package         | Peer range        | Tested         | Notes                                                 |
-| --------------- | ----------------- | -------------- | ----------------------------------------------------- |
-| `@angular/core` | `^22.0.0`         | 22.0.5         | Standalone APIs, signal inputs and `afterNextRender`. |
-| `typescript`    | `~6.0.0`          | 6.0.3          | Whatever your Angular version supports.               |
-| `node`          | `>=20`            | 24.15.0        | Build and SSR only.                                   |
-| `@videojs/html` | `^10.0.0-beta.27` | 10.0.0-beta.27 | The custom elements. Still beta — pin it.             |
+| Package                                                              | Peer range | Tested  | Notes                                                              |
+| -------------------------------------------------------------------- | ---------- | ------- | ------------------------------------------------------------------ |
+| `@angular/core`                                                      | `^22.0.0`  | 22.0.5  | Standalone APIs, signal inputs and `afterNextRender`.              |
+| `typescript`                                                         | `~6.0.0`   | 6.0.3   | Whatever your Angular version supports.                            |
+| `node`                                                               | `>=20`     | 24.15.0 | Build and SSR only.                                                |
+| `@videojs/html`                                                      | `^10.5.0`  | 10.5.0  | The custom elements. The custom skin is ejected from this version. |
+| `@videojs/hlsjs-video`, `dash-video`, `youtube-video`, `vimeo-video` | `^10.5.0`  | 10.5.0  | Provider engines, loaded only when a source needs them.            |
 
 ## SSR
 

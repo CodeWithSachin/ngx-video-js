@@ -1,7 +1,7 @@
 {
   "name": "@code_with_sachin/ngx-video-js",
-  "version": "0.1.1",
-  "description": "Angular wrapper for the Video.js 10 web components — the full default video skin in one standalone component, SSR-safe and lazily loaded.",
+  "version": "0.2.0",
+  "description": "Angular wrapper for the Video.js 10 web components — the default skin in one standalone component, with playback events, an imperative API and a seek guard. SSR-safe and lazily loaded.",
   "keywords": [
     "angular",
     "videojs",
@@ -33,7 +33,11 @@
   "peerDependencies": {
     "@angular/common": "^22.0.0",
     "@angular/core": "^22.0.0",
-    "@videojs/html": "^10.0.0-beta.27"
+    "@videojs/html": "^10.5.0",
+    "@videojs/hlsjs-video": "^10.5.0",
+    "@videojs/dash-video": "^10.5.0",
+    "@videojs/youtube-video": "^10.5.0",
+    "@videojs/vimeo-video": "^10.5.0"
   },
   "dependencies": {
     "tslib": "^2.3.0"
